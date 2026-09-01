@@ -20,6 +20,10 @@
   <img src="https://img.shields.io/badge/Tailwind-06B6D4?logo=tailwindcss&logoColor=white" alt="Tailwind" />
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/01-home.png" alt="MediCare homepage" width="920" />
+</p>
+
 ---
 
 ## 🔗 Live Links
@@ -37,6 +41,40 @@
 - **For Doctors:** Dedicated login to view and manage upcoming appointments, and update profile/availability.
 - **For Admins:** Manage doctors, specializations, and overall clinic activities through a separate admin dashboard.
 - **Payments:** Support for both cash (at hospital) and online payments.
+
+---
+
+## 📸 Product Tour
+
+### Find a Doctor
+Search by name or specialization. Open their profile to see their fees, availability, and to book an appointment.
+<p align="center">
+  <img src="docs/screenshots/02-doctors.png" alt="Doctors directory" width="920" />
+</p>
+
+### Doctor Profile & Booking
+Patient form and live booking summary.
+<p align="center">
+  <img src="docs/screenshots/08-doctor.png" alt="Doctor profile and appointment form" width="920" />
+</p>
+
+### Diagnostic Services
+Book lab tests and diagnostic services with the same ease as booking a doctor.
+<p align="center">
+  <img src="docs/screenshots/03-services.png" alt="Diagnostic services" width="920" />
+</p>
+
+### Payments
+Pay via cash at the hospital or online.
+<p align="center">
+  <img src="docs/screenshots/05-payments.png" alt="Payments page" width="920" />
+</p>
+
+### Doctor Login Dashboard
+A dedicated panel for doctors to see their scheduled appointments and update their profile.
+<p align="center">
+  <img src="docs/screenshots/07-login.png" alt="Doctor login" width="920" />
+</p>
 
 ---
 
