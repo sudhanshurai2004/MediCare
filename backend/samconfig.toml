@@ -1,0 +1,21 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "medbridge"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+stack_name = "medbridge"
+region = "ap-south-1"
+resolve_s3 = true
+s3_prefix = "medbridge"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "ProjectName=medbridge Stage=prod AllowedOrigin='*' BedrockModelId=anthropic.claude-3-5-sonnet-20241022-v2:0 MaxImageBytes=7340032"
+image_repositories = []

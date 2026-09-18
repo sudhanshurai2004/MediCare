@@ -1,0 +1,343 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  MedBridge serverless backend: private Indian lab-report storage, Textract OCR,
+  Bedrock interpretation, Cognito authentication, and longitudinal history.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: medbridge
+    AllowedPattern: "^[a-z][a-z0-9-]{2,30}$"
+    Description: Lowercase prefix used in tags and names where applicable.
+  Stage:
+    Type: String
+    Default: prod
+    AllowedPattern: "^[a-zA-Z0-9-]{1,20}$"
+    Description: API Gateway deployment stage.
+  AllowedOrigin:
+    Type: String
+    Default: "*"
+    Description: >-
+      Browser origin allowed to call the API, for example https://main.example.amplifyapp.com.
+      Use * only while bootstrapping or when bearer-token CORS is acceptable.
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-3-5-sonnet-20241022-v2:0
+    Description: Bedrock model ID enabled in the deployment region.
+  MaxImageBytes:
+    Type: Number
+    Default: 7340032
+    MinValue: 1048576
+    MaxValue: 9437184
+    Description: Maximum decoded JPG or PNG size accepted by the API (default 7 MiB).
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Architectures:
+      - arm64
+    MemorySize: 1024
+    Timeout: 29
+    Tracing: Active
+    Environment:
+      Variables:
+        REPORTS_BUCKET: !Ref ReportsBucket
+        REPORTS_TABLE: !Ref ReportsTable
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+        ALLOWED_ORIGIN: !Ref AllowedOrigin
+        MAX_IMAGE_BYTES: !Ref MaxImageBytes
+        LOG_LEVEL: INFO
+    Tags:
+      Application: !Ref ProjectName
+      Stage: !Ref Stage
+
+Resources:
+  ReportsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Enabled
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders:
+              - "*"
+            AllowedMethods:
+              - GET
+              - PUT
+              - POST
+            AllowedOrigins:
+              - !Ref AllowedOrigin
+            ExposedHeaders:
+              - ETag
+            MaxAge: 3000
+      Tags:
+        - Key: Application
+          Value: !Ref ProjectName
+        - Key: DataClassification
+          Value: SensitiveHealthInformation
+
+  ReportsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: reportId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: reportId
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      TableClass: STANDARD
+      Tags:
+        - Key: Application
+          Value: !Ref ProjectName
+        - Key: DataClassification
+          Value: SensitiveHealthInformation
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub "${ProjectName}-${Stage}-users"
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      EmailVerificationSubject: "Your MedBridge verification code"
+      EmailVerificationMessage: "Your MedBridge verification code is {####}. It expires shortly for your security."
+      MfaConfiguration: "OFF"
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 10
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 3
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+      UserPoolTags:
+        Application: !Ref ProjectName
+        Stage: !Ref Stage
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub "${ProjectName}-${Stage}-web"
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      SupportedIdentityProviders:
+        - COGNITO
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  MedBridgeApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${ProjectName}-${Stage}-api"
+      StageName: !Ref Stage
+      EndpointConfiguration:
+        Type: REGIONAL
+      TracingEnabled: true
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
+        AllowOrigin: !Sub "'${AllowedOrigin}'"
+        MaxAge: "'300'"
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: !Sub "'${AllowedOrigin}'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
+              Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: !Sub "'${AllowedOrigin}'"
+              Access-Control-Allow-Headers: "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'"
+              Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        AddDefaultAuthorizerToCorsPreflight: false
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt UserPool.Arn
+            Identity:
+              Header: Authorization
+              ValidationExpression: "^Bearer [-0-9a-zA-Z\\._]*$"
+
+  UploadReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-upload-report"
+      CodeUri: functions/upload-report/
+      Handler: handler.lambda_handler
+      Description: Validates a base64 JPG/PNG and privately stores it in S3.
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref ReportsBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ReportsTable
+        - AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:DeleteObject
+              Resource: !Sub "${ReportsBucket.Arn}/private/*"
+      Events:
+        CreateReport:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MedBridgeApi
+            Path: /reports
+            Method: post
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  AnalyzeReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-analyze-report"
+      CodeUri: functions/analyze-report/
+      Handler: handler.lambda_handler
+      MemorySize: 1536
+      Timeout: 29
+      Description: Runs Textract, Claude analysis, localization, and trend calculation.
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref ReportsBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ReportsTable
+        - AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action:
+                - textract:AnalyzeDocument
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        AnalyzeReport:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MedBridgeApi
+            Path: /reports/{reportId}/analyze
+            Method: post
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  GetHistoryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-get-history"
+      CodeUri: functions/get-history/
+      Handler: handler.lambda_handler
+      Description: Returns the authenticated user's private report history and trends.
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref ReportsTable
+        - AWSXRayDaemonWriteAccess
+      Events:
+        GetHistory:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MedBridgeApi
+            Path: /reports
+            Method: get
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  TranslateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-${Stage}-translate"
+      CodeUri: functions/translate/
+      Handler: handler.lambda_handler
+      Description: Safely translates approved health-summary fields with Bedrock.
+      Policies:
+        - AWSXRayDaemonWriteAccess
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        TranslateContent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref MedBridgeApi
+            Path: /translate
+            Method: post
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+Outputs:
+  ApiUrl:
+    Description: Cognito-protected MedBridge REST API base URL.
+    Value: !Sub "https://${MedBridgeApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiUrl"
+  UserPoolId:
+    Description: Cognito User Pool ID for the MedBridge web client.
+    Value: !Ref UserPool
+    Export:
+      Name: !Sub "${AWS::StackName}-UserPoolId"
+  ClientId:
+    Description: Cognito public User Pool Client ID for the MedBridge web client.
+    Value: !Ref UserPoolClient
+    Export:
+      Name: !Sub "${AWS::StackName}-ClientId"
+  BucketName:
+    Description: Private S3 bucket holding original report images.
+    Value: !Ref ReportsBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketName"
+  ReportsTableName:
+    Description: DynamoDB table holding private report metadata and analyses.
+    Value: !Ref ReportsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-ReportsTableName"
